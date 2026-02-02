@@ -1,6 +1,6 @@
 {
   "name": "ocft",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "OpenClaw File Transfer Protocol - P2P file transfer between bots",
   "main": "dist/index.js",
   "type": "module",
