@@ -1,113 +1,143 @@
 # OCFT - OpenClaw File Transfer Protocol
 
-봇 간 메시지 채널(Telegram/Discord 등)을 통한 P2P 파일 전송 프로토콜.
+P2P file transfer between AI agents via message channels.
 
-## 특징
+## Features
 
-- 🔗 **메시지 기반**: 기존 채팅 채널을 통한 파일 전송
-- 📦 **청크 전송**: 대용량 파일을 작은 조각으로 분할
-- ✅ **무결성 검증**: SHA-256 해시로 청크/파일 검증
-- 🤝 **요청/수락**: 명시적 수락 또는 자동 수락 정책
-- 🔒 **보안**: 신뢰할 수 있는 피어 화이트리스트
+- 🔗 **Message-based**: Transfer files through existing chat channels
+- 📦 **Chunked transfer**: Split large files into small pieces
+- ✅ **Integrity verification**: SHA-256 hash for chunks and files
+- 🤝 **Request/Accept**: Explicit acceptance or auto-accept policy
+- 🔒 **Security**: Trusted peer whitelist with secrets
 
-## 설치
-
-```bash
-npm install
-```
-
-## 데모
+## Installation
 
 ```bash
-npm run demo
+npm install -g ocft
 ```
 
-## 프로토콜 흐름
+## Quick Start
+
+```bash
+# Initialize your node (generates unique ID and secret)
+ocft init
+
+# View your status
+ocft status
+
+# Export your connection info to share with peers
+ocft export
+
+# Add a trusted peer
+ocft add-peer <nodeId> <secret> --name "Friend"
+
+# Or import from URI
+ocft import ocft://eyJub2RlSWQ...
+```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `ocft init` | Initialize node with unique ID and secret |
+| `ocft status` | Show node status and configuration |
+| `ocft show-secret` | Display full secret (careful!) |
+| `ocft export` | Export connection info as URI |
+| `ocft import <uri>` | Import peer from ocft:// URI |
+| `ocft add-peer <id> <secret>` | Add a trusted peer |
+| `ocft remove-peer <id>` | Remove a trusted peer |
+| `ocft list-peers` | List all trusted peers |
+| `ocft set-download <dir>` | Set download directory |
+| `ocft verify <secret>` | Verify if a secret matches yours |
+
+## Protocol Flow
 
 ```
 [Sender]                    [Receiver]
     │                           │
-    │── OFFER ─────────────────>│  파일 메타데이터
-    │<───────────── ACCEPT ─────│  수락
-    │── CHUNK[0] ──────────────>│  데이터 청크
-    │<───────────── ACK[0] ─────│  수신 확인
+    │── OFFER ─────────────────>│  (file metadata + secret)
+    │<───────────── ACCEPT ─────│  (auto-accept if secret valid)
+    │── CHUNK[0] ──────────────>│
+    │<───────────── ACK[0] ─────│
     │── CHUNK[1] ──────────────>│
     │<───────────── ACK[1] ─────│
     │...                        │
-    │── COMPLETE ──────────────>│  전송 완료
-    │<───────────── ACK ────────│  최종 확인
+    │── COMPLETE ──────────────>│
+    │<───────────── ACK ────────│
 ```
 
-## 메시지 타입
+## Secret-Based Auto-Accept
 
-| Type | 설명 |
-|------|------|
-| `offer` | 파일 전송 제안 (메타데이터 포함) |
-| `accept` | 전송 수락 |
-| `reject` | 전송 거절 |
-| `chunk` | 데이터 청크 (Base64) |
-| `ack` | 청크 수신 확인 |
-| `complete` | 전송 완료 |
-| `error` | 오류 |
+When the sender knows the receiver's secret, files are automatically accepted without manual approval:
 
-## 사용법
+1. Bot A shares their secret with Bot B
+2. Bot B adds Bot A as trusted peer with the secret
+3. When Bot B sends a file to Bot A, it includes A's secret
+4. Bot A verifies the secret and auto-accepts
+
+This enables trusted agent networks to share files seamlessly.
+
+## Programmatic Usage
 
 ```typescript
-import { TransferManager } from './transfer.js';
+import { TransferManager } from 'ocft';
 
-// 봇 초기화
 const bot = new TransferManager({
   botId: 'my-bot',
+  secret: 'my-secret',
   downloadDir: './downloads',
-  autoAccept: true,
-  trustedPeers: ['friend-bot'],
-  maxFileSize: 100 * 1024 * 1024 // 100MB
+  trustedPeers: [
+    { id: 'friend-bot', secret: 'friends-secret' }
+  ]
 }, async (to, message) => {
-  // 메시지 전송 함수 (Telegram/Discord API 호출)
+  // Your message sending function
   await sendMessage(to, message);
 });
 
-// 이벤트 핸들러
+// Event handlers
 bot.on('offer-received', (transfer) => {
-  console.log(`Offer: ${transfer.filename}`);
-  // bot.acceptTransfer(transfer.id) 또는
-  // bot.rejectTransfer(transfer.id, 'reason')
+  console.log(`Incoming: ${transfer.filename}`);
 });
 
 bot.on('transfer-completed', (transfer) => {
   console.log(`Saved: ${transfer.localPath}`);
 });
 
-// 파일 전송
-const transferId = await bot.sendFile('other-bot', '/path/to/file.txt');
+// Send a file
+await bot.sendFile('friend-bot', '/path/to/file.txt');
 
-// 수신 메시지 처리
+// Handle incoming messages
 bot.handleMessage(fromId, messageText);
 ```
 
-## 파일 구조
+## Message Format
 
-```
-src/
-├── protocol.ts   # 메시지 타입 정의
-├── chunker.ts    # 파일 분할/조립
-├── transfer.ts   # TransferManager
-└── demo.ts       # 데모
-```
-
-## 메시지 포맷
-
-OCFT 메시지는 `🔗OCFT:` 접두사 + Base64 인코딩된 JSON:
+OCFT messages use a `🔗OCFT:` prefix with Base64-encoded JSON:
 
 ```
 🔗OCFT:eyJ2ZXJzaW9uIjoiMS4wIiwidHlwZSI6Im9mZmVyIi4uLn0=
 ```
 
-## 제한사항
+This allows file transfers over any text-based channel (Telegram, Discord, Slack, etc).
 
-- 청크 크기: 48KB (Base64 안전 범위)
-- 기본 최대 파일 크기: 100MB
-- Telegram 메시지 제한 고려 필요
+## Configuration
+
+Config is stored at `~/.ocft/config.json`:
+
+```json
+{
+  "nodeId": "ocft_abc123_xyz789",
+  "secret": "your-secret-key",
+  "trustedPeers": [],
+  "downloadDir": "~/Downloads/ocft"
+}
+```
+
+## Limitations
+
+- Chunk size: 48KB (safe for Base64 in messages)
+- Default max file size: 100MB
+- Designed for text-based channels
 
 ## License
 
