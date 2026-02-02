@@ -20,8 +20,8 @@ export interface OCFTMessage {
   version: string;
   type: MessageType;
   transferId: string;
-  from: string;       // 보내는 봇 ID
-  to: string;         // 받는 봇 ID
+  from: string;       // Sender bot ID
+  to: string;         // Receiver bot ID
   timestamp: number;
   payload: unknown;
 }
