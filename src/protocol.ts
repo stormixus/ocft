@@ -7,13 +7,13 @@ export const OCFT_VERSION = '1.0';
 
 // Message Types
 export type MessageType = 
-  | 'offer'      // 파일 전송 제안
-  | 'accept'     // 수락
-  | 'reject'     // 거절
-  | 'chunk'      // 데이터 청크
-  | 'ack'        // 청크 수신 확인
-  | 'complete'   // 전송 완료
-  | 'error';     // 오류
+  | 'offer'      // File transfer offer
+  | 'accept'     // Accept transfer
+  | 'reject'     // Reject transfer
+  | 'chunk'      // Data chunk
+  | 'ack'        // Chunk acknowledgement
+  | 'complete'   // Transfer complete
+  | 'error';     // Error
 
 // Base Message
 export interface OCFTMessage {
@@ -26,7 +26,7 @@ export interface OCFTMessage {
   payload: unknown;
 }
 
-// Offer Payload - 파일 전송 제안
+// Offer Payload - File transfer proposal
 export interface OfferPayload {
   filename: string;
   size: number;
