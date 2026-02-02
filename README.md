@@ -47,8 +47,39 @@ ocft import ocft://eyJub2RlSWQ...
 | `ocft add-peer <id> <secret>` | Add a trusted peer |
 | `ocft remove-peer <id>` | Remove a trusted peer |
 | `ocft list-peers` | List all trusted peers |
+| `ocft extend-peer <id> <hours>` | Extend a peer's trust TTL |
 | `ocft set-download <dir>` | Set download directory |
+| `ocft set-ttl <hours>` | Set default TTL for outgoing offers |
 | `ocft verify <secret>` | Verify if a secret matches yours |
+
+## New in v1.1.0
+
+### Resume Support
+Interrupted transfers can be resumed from the last acknowledged chunk:
+- Receiver requests resume in ACCEPT message
+- Sender continues from specified chunk index
+- No re-transfer of already received data
+
+### Secret TTL
+Secrets can now have expiration times:
+```bash
+# Add peer with 24-hour trust
+ocft add-peer <id> <secret> --ttl 24
+
+# Import with TTL
+ocft import ocft://... --ttl 48
+
+# Set default TTL for outgoing offers
+ocft set-ttl 72
+
+# Extend existing peer's trust
+ocft extend-peer <id> 24
+```
+
+When a secret expires:
+- Auto-accept is disabled for that peer
+- Manual approval required for file transfers
+- Use `extend-peer` to renew trust
 
 ## Protocol Flow
 

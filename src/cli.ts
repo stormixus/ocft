@@ -17,8 +17,9 @@ const VERSION = '1.0.0';
 interface OCFTConfig {
   nodeId: string;
   secret: string;
+  secretTTL?: number;   // TTL in hours (default: no expiry)
   createdAt: string;
-  trustedPeers: { id: string; secret: string; name?: string }[];
+  trustedPeers: { id: string; secret: string; name?: string; expiresAt?: string }[];
   downloadDir: string;
 }
 
@@ -164,6 +165,7 @@ program
   .command('add-peer <nodeId> <secret>')
   .description('Add a trusted peer (auto-accept their files)')
   .option('-n, --name <name>', 'Friendly name for peer')
+  .option('-t, --ttl <hours>', 'Trust expiry in hours (default: never)')
   .action((nodeId, secret, options) => {
     const config = loadConfig();
     if (!config) {
@@ -178,11 +180,21 @@ program
       return;
     }
     
-    config.trustedPeers.push({
+    const peer: { id: string; secret: string; name?: string; expiresAt?: string } = {
       id: nodeId,
       secret: secret,
       name: options.name
-    });
+    };
+    
+    if (options.ttl) {
+      const hours = parseInt(options.ttl, 10);
+      if (!isNaN(hours) && hours > 0) {
+        peer.expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+        console.log(`⏰ Trust expires in ${hours} hours`);
+      }
+    }
+    
+    config.trustedPeers.push(peer);
     
     saveConfig(config);
     
@@ -234,9 +246,16 @@ program
     console.log('🤝 Trusted Peers:');
     console.log('');
     config.trustedPeers.forEach((p, i) => {
-      console.log(`${i + 1}. ${p.name || '(unnamed)'}`);
+      const now = Date.now();
+      const expired = p.expiresAt && new Date(p.expiresAt).getTime() < now;
+      const status = expired ? '❌ EXPIRED' : '✅ Active';
+      
+      console.log(`${i + 1}. ${p.name || '(unnamed)'} ${expired ? '[EXPIRED]' : ''}`);
       console.log(`   ID: ${p.id}`);
       console.log(`   Secret: ${p.secret.slice(0, 8)}...`);
+      if (p.expiresAt) {
+        console.log(`   Expires: ${p.expiresAt} ${status}`);
+      }
       console.log('');
     });
   });
@@ -295,6 +314,7 @@ program
   .command('import <uri>')
   .description('Import peer from ocft:// URI')
   .option('-n, --name <name>', 'Friendly name for peer')
+  .option('-t, --ttl <hours>', 'Trust expiry in hours (default: never)')
   .action((uri, options) => {
     const config = loadConfig();
     if (!config) {
@@ -316,11 +336,21 @@ program
         return;
       }
       
-      config.trustedPeers.push({
+      const peer: { id: string; secret: string; name?: string; expiresAt?: string } = {
         id: decoded.nodeId,
         secret: decoded.secret,
         name: options.name
-      });
+      };
+      
+      if (options.ttl) {
+        const hours = parseInt(options.ttl, 10);
+        if (!isNaN(hours) && hours > 0) {
+          peer.expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+          console.log(`⏰ Trust expires in ${hours} hours`);
+        }
+      }
+      
+      config.trustedPeers.push(peer);
       
       saveConfig(config);
       
@@ -347,6 +377,67 @@ program
     } else {
       console.log('❌ Secret does not match.');
     }
+  });
+
+// ============ SET-TTL ============
+program
+  .command('set-ttl <hours>')
+  .description('Set default secret TTL for outgoing offers (0 = no expiry)')
+  .action((hours) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    const h = parseInt(hours, 10);
+    if (isNaN(h) || h < 0) {
+      console.log('❌ Invalid TTL. Must be a non-negative number of hours.');
+      return;
+    }
+    
+    if (h === 0) {
+      delete config.secretTTL;
+      console.log('✅ Secret TTL disabled. Offers will not expire.');
+    } else {
+      config.secretTTL = h;
+      console.log(`✅ Default TTL set to ${h} hours.`);
+      console.log('   Outgoing offers will include this expiry time.');
+    }
+    
+    saveConfig(config);
+  });
+
+// ============ EXTEND-PEER ============
+program
+  .command('extend-peer <nodeId> <hours>')
+  .description('Extend a peer\'s trust expiry by N hours')
+  .action((nodeId, hours) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    const peer = config.trustedPeers.find(p => p.id === nodeId || p.name === nodeId);
+    if (!peer) {
+      console.log(`❌ Peer not found: ${nodeId}`);
+      return;
+    }
+    
+    const h = parseInt(hours, 10);
+    if (isNaN(h) || h <= 0) {
+      console.log('❌ Invalid hours. Must be a positive number.');
+      return;
+    }
+    
+    const currentExpiry = peer.expiresAt ? new Date(peer.expiresAt).getTime() : Date.now();
+    peer.expiresAt = new Date(currentExpiry + h * 60 * 60 * 1000).toISOString();
+    
+    saveConfig(config);
+    
+    console.log(`✅ Extended trust for ${peer.name || peer.id}`);
+    console.log(`   New expiry: ${peer.expiresAt}`);
   });
 
 program.parse();

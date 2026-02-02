@@ -35,12 +35,15 @@ export interface OfferPayload {
   chunkSize: number;   // bytes per chunk (default 48KB for base64 safety)
   totalChunks: number;
   secret?: string;     // Optional secret for auto-accept
+  secretTTL?: number;  // Secret expiry timestamp (ms since epoch)
+  resumeFrom?: number; // Resume from chunk index (for interrupted transfers)
   metadata?: Record<string, unknown>;
 }
 
 // Accept Payload
 export interface AcceptPayload {
   ready: boolean;
+  resumeFrom?: number; // If resuming, start from this chunk index
 }
 
 // Reject Payload
@@ -104,6 +107,7 @@ export interface TransferInfo {
   completedAt?: number;
   error?: string;
   localPath?: string;  // For receiver: where to save
+  resumable?: boolean; // Can this transfer be resumed?
 }
 
 // Create Message Helper

@@ -16,11 +16,13 @@ export interface TrustedPeer {
   id: string;
   secret: string;
   name?: string;
+  expiresAt?: number;  // TTL: timestamp when this peer's trust expires
 }
 
 export interface TransferManagerConfig {
   botId: string;                    // This bot's ID
   secret: string;                   // This node's secret
+  secretTTL?: number;               // Secret TTL in milliseconds (default: no expiry)
   downloadDir: string;              // Where to save received files
   autoAccept?: boolean;             // Auto-accept from trusted peers (by ID)
   trustedPeers?: TrustedPeer[];     // Trusted peers with secrets
@@ -86,7 +88,8 @@ export class TransferManager extends EventEmitter {
       hash: fileInfo.hash,
       chunkSize: fileInfo.chunkSize,
       totalChunks: fileInfo.totalChunks,
-      secret: this.getPeerSecret(peerId)  // Include peer's secret for auto-accept
+      secret: this.getPeerSecret(peerId),  // Include peer's secret for auto-accept
+      secretTTL: this.config.secretTTL ? Date.now() + this.config.secretTTL : undefined
     });
     
     await this.send(peerId, offer);
@@ -96,7 +99,7 @@ export class TransferManager extends EventEmitter {
   }
   
   // Accept a pending transfer
-  async acceptTransfer(transferId: string): Promise<void> {
+  async acceptTransfer(transferId: string, resumeFrom?: number): Promise<void> {
     const transfer = this.transfers.get(transferId);
     if (!transfer || transfer.direction !== 'receive' || transfer.state !== 'pending') {
       throw new Error('Invalid transfer or already processed');
@@ -104,6 +107,7 @@ export class TransferManager extends EventEmitter {
     
     transfer.state = 'accepted';
     transfer.updatedAt = Date.now();
+    transfer.resumable = true;
     
     // Create assembler
     const outputPath = `${this.config.downloadDir}/${transfer.filename}`;
@@ -111,9 +115,10 @@ export class TransferManager extends EventEmitter {
     const assembler = new ChunkAssembler(outputPath, transfer.hash, transfer.totalChunks);
     this.assemblers.set(transferId, assembler);
     
-    // Send accept
+    // Send accept (with optional resume point)
     const accept = createMessage<AcceptPayload>('accept', transferId, this.config.botId, transfer.peerId, {
-      ready: true
+      ready: true,
+      resumeFrom: resumeFrom
     });
     
     await this.send(transfer.peerId, accept);
@@ -219,17 +224,17 @@ export class TransferManager extends EventEmitter {
     this.transfers.set(msg.transferId, transfer);
     this.emit('offer-received', transfer);
     
-    // Auto-accept if sender knows our secret
-    if (this.isValidSecret(payload.secret)) {
-      await this.acceptTransfer(msg.transferId);
+    // Auto-accept if sender knows our secret (with TTL check)
+    if (this.isValidSecret(payload.secret, payload.secretTTL)) {
+      await this.acceptTransfer(msg.transferId, payload.resumeFrom);
       return;
     }
     
-    // Auto-accept if peer is in trusted list (legacy)
+    // Auto-accept if peer is in trusted list (legacy) with valid trust
     if (this.config.autoAccept) {
-      const isTrusted = this.config.trustedPeers?.some(p => p.id === msg.from);
-      if (isTrusted) {
-        await this.acceptTransfer(msg.transferId);
+      const trustedPeer = this.config.trustedPeers?.find(p => p.id === msg.from);
+      if (trustedPeer && this.isPeerTrustValid(trustedPeer)) {
+        await this.acceptTransfer(msg.transferId, payload.resumeFrom);
       }
     }
   }
@@ -242,8 +247,12 @@ export class TransferManager extends EventEmitter {
     transfer.updatedAt = Date.now();
     this.emit('transfer-started', transfer);
     
-    // Start sending chunks
-    await this.sendNextChunk(msg.transferId, 0);
+    // Check for resume point
+    const payload = msg.payload as AcceptPayload;
+    const startIndex = payload.resumeFrom ?? 0;
+    
+    // Start sending chunks from resume point
+    await this.sendNextChunk(msg.transferId, startIndex);
   }
   
   private async handleReject(msg: OCFTMessage): Promise<void> {
@@ -405,9 +414,72 @@ export class TransferManager extends EventEmitter {
     return peer?.secret;
   }
   
-  // Check if incoming secret matches our secret
-  private isValidSecret(secret: string | undefined): boolean {
+  // Check if incoming secret matches our secret (with TTL validation)
+  private isValidSecret(secret: string | undefined, secretTTL?: number): boolean {
     if (!secret) return false;
-    return secret === this.config.secret;
+    if (secret !== this.config.secret) return false;
+    
+    // Check TTL if provided
+    if (secretTTL && Date.now() > secretTTL) {
+      return false; // Secret has expired
+    }
+    
+    return true;
+  }
+  
+  // Check if a trusted peer's trust has expired
+  private isPeerTrustValid(peer: TrustedPeer): boolean {
+    if (!peer.expiresAt) return true; // No expiry set
+    return Date.now() < peer.expiresAt;
+  }
+  
+  // Resume an interrupted transfer
+  async resumeTransfer(transferId: string): Promise<void> {
+    const transfer = this.transfers.get(transferId);
+    if (!transfer) {
+      throw new Error('Transfer not found');
+    }
+    
+    if (transfer.state === 'completed') {
+      throw new Error('Transfer already completed');
+    }
+    
+    if (transfer.direction === 'receive') {
+      // For receiver: find the last received chunk and accept from there
+      const lastChunk = Math.max(...Array.from(transfer.receivedChunks), -1);
+      transfer.state = 'pending';
+      await this.acceptTransfer(transferId, lastChunk + 1);
+    } else {
+      // For sender: find the last acknowledged chunk and resend offer
+      const lastAcked = Math.max(...Array.from(transfer.receivedChunks), -1);
+      const filePath = this.filePaths.get(transferId);
+      if (!filePath) throw new Error('File path not found');
+      
+      const offer = createMessage<OfferPayload>('offer', transferId, this.config.botId, transfer.peerId, {
+        filename: transfer.filename,
+        size: transfer.size,
+        mimeType: transfer.mimeType,
+        hash: transfer.hash,
+        chunkSize: transfer.chunkSize,
+        totalChunks: transfer.totalChunks,
+        secret: this.getPeerSecret(transfer.peerId),
+        secretTTL: this.config.secretTTL ? Date.now() + this.config.secretTTL : undefined,
+        resumeFrom: lastAcked + 1
+      });
+      
+      transfer.state = 'pending';
+      await this.send(transfer.peerId, offer);
+      this.emit('transfer-resumed', transfer);
+    }
+  }
+  
+  // Get list of resumable transfers
+  getResumableTransfers(): TransferInfo[] {
+    return Array.from(this.transfers.values()).filter(t => 
+      t.resumable && 
+      t.state !== 'completed' && 
+      t.state !== 'rejected' &&
+      t.receivedChunks.size > 0
+    );
   }
 }
