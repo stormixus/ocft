@@ -21,6 +21,7 @@ interface OCFTConfig {
   createdAt: string;
   trustedPeers: { id: string; secret: string; name?: string; expiresAt?: string }[];
   downloadDir: string;
+  maxFileSize?: number; // Max file size in bytes (default: 100MB)
 }
 
 // Generate unique node ID
@@ -123,6 +124,16 @@ program
       return;
     }
     
+    // Format size for display
+    const formatSize = (b: number): string => {
+      if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+      if (b >= 1024) return `${(b / 1024).toFixed(1)} KB`;
+      return `${b} bytes`;
+    };
+    
+    const maxSize = config.maxFileSize || 100 * 1024 * 1024; // Default 100MB
+    
     console.log('');
     console.log('🔗 OCFT Node Status');
     console.log('');
@@ -130,6 +141,7 @@ program
     console.log(`Secret:       ${config.secret.slice(0, 8)}${'*'.repeat(24)}`);
     console.log(`Created:      ${config.createdAt}`);
     console.log(`Downloads:    ${config.downloadDir}`);
+    console.log(`Max Size:     ${formatSize(maxSize)}`);
     console.log(`Trusted:      ${config.trustedPeers.length} peers`);
     
     if (config.trustedPeers.length > 0) {
@@ -406,6 +418,56 @@ program
     }
     
     saveConfig(config);
+  });
+
+// ============ SET-MAX-SIZE ============
+program
+  .command('set-max-size <size>')
+  .description('Set max file size to accept (e.g., 100MB, 1GB, 500KB)')
+  .action((size) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    // Parse size string (e.g., "100MB", "1GB", "500KB")
+    const match = size.match(/^(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)?$/i);
+    if (!match) {
+      console.log('❌ Invalid size format. Use: 100MB, 1GB, 500KB, etc.');
+      return;
+    }
+    
+    const value = parseFloat(match[1]);
+    const unit = (match[2] || 'B').toUpperCase();
+    
+    const multipliers: Record<string, number> = {
+      'B': 1,
+      'KB': 1024,
+      'MB': 1024 * 1024,
+      'GB': 1024 * 1024 * 1024,
+      'TB': 1024 * 1024 * 1024 * 1024
+    };
+    
+    const bytes = Math.floor(value * multipliers[unit]);
+    
+    if (bytes <= 0) {
+      console.log('❌ Size must be greater than 0.');
+      return;
+    }
+    
+    config.maxFileSize = bytes;
+    saveConfig(config);
+    
+    // Format for display
+    const formatSize = (b: number): string => {
+      if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+      if (b >= 1024) return `${(b / 1024).toFixed(1)} KB`;
+      return `${b} bytes`;
+    };
+    
+    console.log(`✅ Max file size set to: ${formatSize(bytes)}`);
   });
 
 // ============ EXTEND-PEER ============
