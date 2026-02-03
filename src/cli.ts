@@ -12,7 +12,7 @@ import { nanoid } from 'nanoid';
 
 const CONFIG_DIR = join(homedir(), '.ocft');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
-const VERSION = '1.0.0';
+const VERSION = '1.1.3';
 
 interface OCFTConfig {
   nodeId: string;
@@ -22,6 +22,14 @@ interface OCFTConfig {
   trustedPeers: { id: string; secret: string; name?: string; expiresAt?: string }[];
   downloadDir: string;
   maxFileSize?: number; // Max file size in bytes (default: 100MB)
+  // IPFS settings
+  ipfsEnabled?: boolean;      // Enable IPFS fallback
+  ipfsThreshold?: number;     // Size threshold for IPFS (bytes, default: 50MB)
+  ipfsProvider?: 'pinata' | 'filebase' | 'kubo';  // IPFS provider
+  ipfsApiKey?: string;        // API key (Pinata JWT or Filebase access key)
+  ipfsApiSecret?: string;     // API secret (Filebase only)
+  ipfsKuboUrl?: string;       // Kubo API URL
+  ipfsGateway?: string;       // Custom public gateway
 }
 
 // Generate unique node ID
@@ -133,6 +141,7 @@ program
     };
     
     const maxSize = config.maxFileSize || 100 * 1024 * 1024; // Default 100MB
+    const ipfsThreshold = config.ipfsThreshold || 50 * 1024 * 1024; // Default 50MB
     
     console.log('');
     console.log('🔗 OCFT Node Status');
@@ -143,6 +152,16 @@ program
     console.log(`Downloads:    ${config.downloadDir}`);
     console.log(`Max Size:     ${formatSize(maxSize)}`);
     console.log(`Trusted:      ${config.trustedPeers.length} peers`);
+    console.log('');
+    console.log('📦 IPFS Fallback:');
+    console.log(`  Enabled:    ${config.ipfsEnabled ? 'Yes' : 'No'}`);
+    console.log(`  Provider:   ${config.ipfsProvider || 'pinata'}`);
+    console.log(`  Threshold:  ${formatSize(ipfsThreshold)} (files larger use IPFS)`);
+    if (config.ipfsProvider === 'kubo') {
+      console.log(`  Kubo URL:   ${config.ipfsKuboUrl || 'http://localhost:5001'}`);
+    } else {
+      console.log(`  API Key:    ${config.ipfsApiKey ? config.ipfsApiKey.slice(0, 8) + '***' : 'Not set'}`);
+    }
     
     if (config.trustedPeers.length > 0) {
       console.log('');
@@ -468,6 +487,159 @@ program
     };
     
     console.log(`✅ Max file size set to: ${formatSize(bytes)}`);
+  });
+
+// ============ IPFS SETTINGS ============
+program
+  .command('ipfs-enable')
+  .description('Enable IPFS fallback for large files')
+  .action(() => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    config.ipfsEnabled = true;
+    saveConfig(config);
+    console.log('✅ IPFS fallback enabled.');
+    console.log(`   Provider: ${config.ipfsProvider || 'pinata'}`);
+    console.log('   Set provider with: ocft set-ipfs-provider <pinata|filebase|kubo>');
+  });
+
+program
+  .command('ipfs-disable')
+  .description('Disable IPFS fallback')
+  .action(() => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    config.ipfsEnabled = false;
+    saveConfig(config);
+    console.log('✅ IPFS fallback disabled.');
+  });
+
+program
+  .command('set-ipfs-provider <provider>')
+  .description('Set IPFS provider (pinata, filebase, kubo)')
+  .action((provider) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    const validProviders = ['pinata', 'filebase', 'kubo'];
+    if (!validProviders.includes(provider.toLowerCase())) {
+      console.log(`❌ Invalid provider. Choose: ${validProviders.join(', ')}`);
+      return;
+    }
+    
+    config.ipfsProvider = provider.toLowerCase() as 'pinata' | 'filebase' | 'kubo';
+    saveConfig(config);
+    console.log(`✅ IPFS provider set to: ${provider}`);
+    
+    if (provider === 'kubo') {
+      console.log('   Set Kubo URL with: ocft set-kubo-url <url>');
+    } else {
+      console.log('   Set API key with: ocft set-ipfs-key <key>');
+    }
+  });
+
+program
+  .command('set-ipfs-key <key>')
+  .description('Set IPFS API key (Pinata JWT or Filebase access key)')
+  .option('-s, --secret <secret>', 'API secret (Filebase only)')
+  .action((key, options) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    config.ipfsApiKey = key;
+    if (options.secret) {
+      config.ipfsApiSecret = options.secret;
+    }
+    config.ipfsEnabled = true;
+    saveConfig(config);
+    console.log('✅ IPFS API key set. IPFS fallback enabled.');
+  });
+
+program
+  .command('set-kubo-url <url>')
+  .description('Set Kubo node API URL (default: http://localhost:5001)')
+  .action((url) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    config.ipfsKuboUrl = url;
+    config.ipfsProvider = 'kubo';
+    config.ipfsEnabled = true;
+    saveConfig(config);
+    console.log(`✅ Kubo URL set to: ${url}`);
+    console.log('   IPFS provider set to: kubo');
+  });
+
+program
+  .command('set-ipfs-threshold <size>')
+  .description('Set size threshold for IPFS fallback (e.g., 50MB, 100MB)')
+  .action((size) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    const match = size.match(/^(\d+(?:\.\d+)?)\s*(KB|MB|GB)?$/i);
+    if (!match) {
+      console.log('❌ Invalid size format. Use: 50MB, 100MB, etc.');
+      return;
+    }
+    
+    const value = parseFloat(match[1]);
+    const unit = (match[2] || 'MB').toUpperCase();
+    
+    const multipliers: Record<string, number> = {
+      'KB': 1024,
+      'MB': 1024 * 1024,
+      'GB': 1024 * 1024 * 1024
+    };
+    
+    const bytes = Math.floor(value * multipliers[unit]);
+    config.ipfsThreshold = bytes;
+    saveConfig(config);
+    
+    const formatSize = (b: number): string => {
+      if (b >= 1024 * 1024 * 1024) return `${(b / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+      if (b >= 1024 * 1024) return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+      if (b >= 1024) return `${(b / 1024).toFixed(1)} KB`;
+      return `${b} bytes`;
+    };
+    
+    console.log(`✅ IPFS threshold set to: ${formatSize(bytes)}`);
+    console.log('   Files larger than this will use IPFS.');
+  });
+
+program
+  .command('set-ipfs-gateway <url>')
+  .description('Set custom public IPFS gateway for download links')
+  .action((url) => {
+    const config = loadConfig();
+    if (!config) {
+      console.log('❌ Not initialized. Run: ocft init');
+      return;
+    }
+    
+    config.ipfsGateway = url;
+    saveConfig(config);
+    console.log(`✅ IPFS gateway set to: ${url}`);
   });
 
 // ============ EXTEND-PEER ============
