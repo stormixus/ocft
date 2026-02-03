@@ -11,6 +11,7 @@ P2P file transfer between AI agents via message channels.
 - 🔒 **Security**: Trusted peer whitelist with secrets
 - ⏰ **Secret TTL**: Set expiry time for trust relationships
 - 🔄 **Resume**: Resume interrupted transfers from last chunk
+- 🌐 **IPFS Fallback**: Auto-upload large files to IPFS
 
 ## Installation
 
@@ -50,9 +51,58 @@ ocft import ocft://eyJub2RlSWQ... --ttl 48
 | `ocft remove-peer <id>` | Remove a trusted peer |
 | `ocft list-peers` | List all trusted peers |
 | `ocft set-download <dir>` | Set download directory |
+| `ocft set-max-size <size>` | Set max file size (e.g., 500MB, 2GB) |
 | `ocft set-ttl <hours>` | Set default secret TTL for offers |
 | `ocft extend-peer <id> <hours>` | Extend a peer's trust expiry |
 | `ocft verify <secret>` | Verify if a secret matches yours |
+
+## IPFS Fallback
+
+For large files or when the receiver doesn't support OCFT, files can be uploaded to IPFS instead.
+
+### Supported Providers
+
+| Provider | Description |
+|----------|-------------|
+| `pinata` | Pinata Cloud (default) - requires JWT token |
+| `filebase` | Filebase (S3-compatible) - requires access key + secret |
+| `kubo` | Local IPFS node - no auth required |
+
+### IPFS Commands
+
+```bash
+# Enable IPFS fallback
+ocft ipfs-enable
+
+# Set provider
+ocft set-ipfs-provider pinata    # or: filebase, kubo
+
+# Configure credentials
+ocft set-ipfs-key <jwt-token>                    # Pinata
+ocft set-ipfs-key <access-key> --secret <secret> # Filebase
+ocft set-kubo-url http://localhost:5001          # Kubo (local node)
+
+# Set size threshold (files larger than this use IPFS)
+ocft set-ipfs-threshold 50MB
+
+# Set custom public gateway
+ocft set-ipfs-gateway https://ipfs.io/ipfs
+```
+
+### How It Works
+
+1. If file size > threshold (default 50MB), upload to IPFS
+2. If receiver doesn't support OCFT, send IPFS link instead
+3. Receiver downloads from public IPFS gateway
+
+```
+[Sender]                              [IPFS]                    [Receiver]
+    │                                    │                           │
+    │── Upload (file > 50MB) ───────────>│                           │
+    │<────────────────── CID ────────────│                           │
+    │── Send IPFS link ──────────────────────────────────────────────>│
+    │                                    │<── Download from gateway ──│
+```
 
 ## Protocol Flow
 
@@ -165,14 +215,20 @@ Config is stored at `~/.ocft/config.json`:
   "trustedPeers": [
     { "id": "peer-id", "secret": "peer-secret", "expiresAt": "2026-02-03T00:00:00Z" }
   ],
-  "downloadDir": "~/Downloads/ocft"
+  "downloadDir": "~/Downloads/ocft",
+  "maxFileSize": 1073741824,
+  "ipfsEnabled": true,
+  "ipfsProvider": "pinata",
+  "ipfsThreshold": 52428800,
+  "ipfsApiKey": "your-pinata-jwt"
 }
 ```
 
 ## Limitations
 
 - Chunk size: 48KB (safe for Base64 in messages)
-- Default max file size: 100MB
+- Default max file size: 100MB (configurable)
+- IPFS threshold: 50MB (configurable)
 - Designed for text-based channels
 
 ## License
